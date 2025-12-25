@@ -1,14 +1,11 @@
 import os
 from flask import Flask, request, jsonify
-from flask_cors import CORS  # ← أضف هذا
+from flask_cors import CORS
 from ortools.sat.python import cp_model
 
 app = Flask(__name__)
-CORS(app, origins=[
-    "https://schooj-efd2b.web.app",
-    "https://schooj-efd2b.firebaseapp.com",
-    "http://localhost:5000"
-])  
+# تفعيل CORS للسماح لFirebase بالاتصال بالسيرفر
+CORS(app, origins=["*"]) 
 
 def solve_school_timetable(data):
     lessons = data.get("lessons", [])
@@ -19,15 +16,17 @@ def solve_school_timetable(data):
         raise ValueError("Lessons and timeslots are required")
 
     model = cp_model.CpModel()
-
     assignments = {}
+
+    # إنشاء المتغيرات
     for lesson in lessons:
-        for t_idx, _ in enumerate(timeslots):
-            for r_idx, _ in enumerate(rooms):
+        for t_idx in range(len(timeslots)):
+            for r_idx in range(len(rooms)):
                 assignments[(lesson["id"], t_idx, r_idx)] = model.NewBoolVar(
                     f'assign_{lesson["id"]}_t{t_idx}_r{r_idx}'
                 )
 
+    # قيد: كل درس يجب أن يوضع في حصة واحدة فقط
     for lesson in lessons:
         model.Add(
             sum(assignments[(lesson["id"], t_idx, r_idx)]
@@ -35,6 +34,7 @@ def solve_school_timetable(data):
                 for r_idx in range(len(rooms))) == 1
         )
 
+    # قيد: المعلم لا يدرس حصتين في نفس الوقت
     teacher_lessons = {}
     for lesson in lessons:
         teacher = lesson["teacher"]
@@ -48,30 +48,40 @@ def solve_school_timetable(data):
                     for r_idx in range(len(rooms))) <= 1
             )
 
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 300.0
-    solver.parameters.num_search_workers = 8
+    # قيد: الفصل لا يحصل على حصتين في نفس الوقت
+    class_lessons = {}
+    for lesson in lessons:
+        class_id = lesson.get("classId")
+        class_lessons.setdefault(class_id, []).append(lesson)
+    
+    for c_id, c_lessons in class_lessons.items():
+        for t_idx in range(len(timeslots)):
+            model.Add(
+                sum(assignments[(lesson["id"], t_idx, r_idx)]
+                    for lesson in c_lessons
+                    for r_idx in range(len(rooms))) <= 1
+            )
 
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = 60.0 # تقليل الوقت لسرعة الاستجابة
     status = solver.Solve(model)
 
     if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        solution = {}
+        solution = []
         for lesson in lessons:
             for t_idx, timeslot in enumerate(timeslots):
                 for r_idx, room in enumerate(rooms):
                     if solver.Value(assignments[(lesson["id"], t_idx, r_idx)]) == 1:
-                        solution[lesson["id"]] = {
-                            "lesson": lesson,
-                            "assigned_timeslot": timeslot,
-                            "assigned_room": room
-                        }
+                        solution.append({
+                            "lessonId": lesson["id"],
+                            "subject": lesson["subject"],
+                            "teacher": lesson["teacher"],
+                            "classId": lesson["classId"],
+                            "timeslot": timeslot # "الأحد_1"
+                        })
         return solution
     else:
-        raise Exception("No feasible timetable could be generated within time limit")
-
-@app.route('/health', methods=['GET'])
-def health():
-    return jsonify({"status": "OK"})
+        raise Exception("لا يمكن إيجاد حل يحقق جميع الشروط")
 
 @app.route('/solve', methods=['POST'])
 def solve():
