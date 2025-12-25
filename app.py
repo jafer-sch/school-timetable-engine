@@ -1,8 +1,14 @@
 import os
 from flask import Flask, request, jsonify
+from flask_cors import CORS  # ← أضف هذا
 from ortools.sat.python import cp_model
 
 app = Flask(__name__)
+CORS(app, origins=[
+    "https://schooj-efd2b.web.app",
+    "https://schooj-efd2b.firebaseapp.com",
+    "http://localhost:5000"
+])  
 
 def solve_school_timetable(data):
     lessons = data.get("lessons", [])
