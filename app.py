@@ -5,7 +5,7 @@ from ortools.sat.python import cp_model
 
 app = Flask(__name__)
 # تفعيل CORS للسماح بالاتصال من واجهة الويب الخاصة بك
-CORS(app, origins=["*"])
+CORS(app, origins=["https://schooj-efd2b.web.app"])
 
 def solve_school_timetable(data):
     lessons = data.get("lessons", [])
